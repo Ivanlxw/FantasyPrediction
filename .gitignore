@@ -1,0 +1,9 @@
+.envrc
+setup.py
+
+test*.ipynb
+
+# any cache/init
+*/__*
+# any setup.py generated egg info
+*.egg-info/

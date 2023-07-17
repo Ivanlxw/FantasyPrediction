@@ -1,0 +1,4 @@
+# rename to .envrc and fill the variables
+export DATA_DIR=""
+export WORKBENCH_ROOT=""
+export DB_URL=""
