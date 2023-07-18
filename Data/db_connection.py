@@ -1,3 +1,4 @@
+from multiprocessing import Pool
 import os
 
 from sqlalchemy import create_engine
@@ -49,14 +50,14 @@ def update_league_game_log(years: list):
 
     conn = get_connection()
     league_log_df = pd.concat([get_league_log_df(get_season_id(year)) for year in years])
-    league_log_from_db = pd.read_sql("SELECT * from nba.league_game_stats", conn)
+    league_log_from_db = pd.read_sql("SELECT * from nba.league_game_logs", conn)
     league_log_df.astype(league_log_from_db.dtypes)
 
     unique_box_scores_df = pd.concat([league_log_df, league_log_from_db]).drop_duplicates(
         subset=["SEASON_ID", "GAME_ID", "TEAM_ID"], keep=False
     )
     rows_affected = unique_box_scores_df.to_sql(
-        "league_game_stats", conn, schema="nba", if_exists="append", chunksize=10000, index=False
+        "league_game_logs", conn, schema="nba", if_exists="append", chunksize=10000, index=False
     )
     print(f"{rows_affected} rows affected")
 
@@ -68,17 +69,17 @@ def _get_game_logs_df(start_year, team_id):
 
 
 def update_team_game_log(years: list):
-    conn = get_connection()
     teams_df = pd.read_sql("SELECT * FROM nba.teams", conn)
-    game_logs_df = pd.concat(
-        [_get_game_logs_df(start_year, team_id) for team_id in teams_df.id.unique() for start_year in years]
-    )
+    with Pool(8) as p:
+        dfs = p.starmap(_get_game_logs_df, [(year, team_id) for team_id in teams_df.id.unique() for year in years])
+    game_logs_df = pd.concat([dfs])
 
-    game_logs_from_db = pd.read_sql("SELECT * from nba.team_game_stats", conn)
+    conn = get_connection()
+    game_logs_from_db = pd.read_sql("SELECT * from nba.team_game_logs", conn)
     unique_game_logs_df = pd.concat([game_logs_df, game_logs_from_db]).drop_duplicates(
-        subset=["SEASON_ID", "TEAM_ID", "GAME_ID"], keep=False
+        subset=["SEASON_YEAR", "TEAM_ID", "GAME_ID"], keep=False
     )
     rows_affected = unique_game_logs_df.to_sql(
-        "team_game_stats", conn, schema="nba", if_exists="append", chunksize=10000, index=False
+        "team_game_logs", conn, schema="nba", if_exists="append", chunksize=10000, index=False
     )
     print(f"{rows_affected} rows affected")
