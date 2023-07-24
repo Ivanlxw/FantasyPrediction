@@ -2,6 +2,7 @@ from multiprocessing import Pool
 import os
 
 from sqlalchemy import create_engine
+import numpy as np
 import pandas as pd
 
 import nba_api.stats.endpoints as nba_stats
@@ -14,6 +15,10 @@ def get_connection():
     return db.connect()
 
 
+def get_team_df():
+    return pd.read_sql("select * from nba.teams", get_connection())
+
+
 def update_team_db():
     team_df = pd.DataFrame(teams.get_teams()).set_index("id", drop=True)
     team_df.to_sql("teams", get_connection(), schema="nba", if_exists="replace")
@@ -22,6 +27,60 @@ def update_team_db():
 def update_player_db():
     player_df = pd.DataFrame(players.get_players()).set_index("id", drop=True)
     player_df.to_sql("players", get_connection(), schema="nba", if_exists="replace")
+
+
+def get_player_df():
+    sql = "select * from nba.players"
+    return pd.read_sql(sql, con=get_connection())
+
+
+def get_player_info_df():
+    return pd.read_sql("select * from nba.player_info", con=get_connection())
+
+
+def _get_player_info(player_id):
+    player_info = nba_stats.commonplayerinfo.CommonPlayerInfo(player_id)
+    df = player_info.get_data_frames()[0]
+    df["PLAYER_ID"] = player_id
+    return df
+
+
+def update_player_info_df():
+    player_info_df = get_player_info_df()
+    player_df = get_player_df().query("is_active")
+    df = pd.concat(
+        [
+            _get_player_info(player_id)
+            for player_id in player_df.id.unique()
+            if player_id not in player_info_df["PLAYER_ID"]
+        ]
+    )
+    df.to_sql("player_info", get_connection(), schema="nba", if_exists="append")
+
+
+def get_team_roster_df():
+    return pd.read_sql("select * from nba.team_roster", get_connection())
+
+
+def _get_team_roster(team_id, season):
+    roster = nba_stats.CommonTeamRoster(team_id, season=get_season_id(season))
+    return roster.common_team_roster.get_data_frame()
+
+
+def update_team_roster():
+    team_ids = get_team_roster_df().id.unique()
+    args = [(team_id, season) for season in np.arange(2008, 2023) for team_id in team_ids]
+
+    with Pool(8) as p:
+        L = p.starmap(_get_team_roster, args)
+    team_roster_df = pd.concat(L)
+
+    from_api = "left_only"
+    team_roster_df = pd.merge(
+        team_roster_df, pd.read_sql("select * from nba.team_roster", get_connection()), indicator=True
+    ).query("_merge == @from_api")
+    if not team_roster_df.empty:
+        team_roster_df.to_sql("team_roster", con=get_connection(), schema="nba", if_exists="append", index=False)
 
 
 def _get_player_game_logs_df(start_year):
@@ -44,13 +103,17 @@ def update_box_scores(years: list):
     print(f"{rows_affected} rows affected")
 
 
+def get_league_log_df():
+    return pd.read_sql("SELECT * from nba.league_game_logs", get_connection())
+
+
 def update_league_game_log(years: list):
-    def get_league_log_df(szn_id):
+    def _get_league_log_df(szn_id):
         return nba_stats.leaguegamelog.LeagueGameLog(season=szn_id).league_game_log.get_data_frame()
 
     conn = get_connection()
-    league_log_df = pd.concat([get_league_log_df(get_season_id(year)) for year in years])
-    league_log_from_db = pd.read_sql("SELECT * from nba.league_game_logs", conn)
+    league_log_df = pd.concat([_get_league_log_df(get_season_id(year)) for year in years])
+    league_log_from_db = get_league_log_df()
     league_log_df.astype(league_log_from_db.dtypes)
 
     unique_box_scores_df = pd.concat([league_log_df, league_log_from_db]).drop_duplicates(
