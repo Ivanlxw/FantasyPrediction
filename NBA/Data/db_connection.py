@@ -7,7 +7,14 @@ import pandas as pd
 
 import nba_api.stats.endpoints as nba_stats
 from nba_api.stats.static import players, teams
-from prediction.utils import get_season_id
+from NBA.prediction.utils import get_season_id
+from nba_api.stats.endpoints import (
+    BoxScoreUsageV2,
+    BoxScoreAdvancedV2,
+    BoxScoreFourFactorsV2,
+    BoxScoreDefensive,
+    BoxScoreScoringV2,
+)
 
 
 def get_connection():
@@ -83,6 +90,12 @@ def update_team_roster():
         team_roster_df.to_sql("team_roster", con=get_connection(), schema="nba", if_exists="append", index=False)
 
 
+def get_player_game_logs_df(start_year=None):
+    if start_year is None:
+        return pd.read_sql(f"SELECT * from nba.box_score", con=get_connection())
+    return pd.read_sql(f'SELECT * from nba.box_score where "SEASON_YEAR" = {get_season_id(start_year)}')
+
+
 def _get_player_game_logs_df(start_year):
     return nba_stats.PlayerGameLogs(season_nullable=get_season_id(start_year)).player_game_logs.get_data_frame()
 
@@ -146,3 +159,100 @@ def update_team_game_log(years: list):
         "team_game_logs", conn, schema="nba", if_exists="append", chunksize=10000, index=False
     )
     print(f"{rows_affected} rows affected")
+
+
+def _get_unique_ids_to_update(table_name: str):
+    player_game_logs_df = get_player_game_logs_df()
+    existing_game_ids = pd.read_sql(f'select "GAME_ID" from nba.{table_name}', con=get_connection()).GAME_ID
+    return player_game_logs_df.GAME_ID[~player_game_logs_df.GAME_ID.isin(existing_game_ids)].unique()
+
+
+def _get_box_score_specific_data(box_score_name, func):
+    unique_ids = _get_unique_ids_to_update(box_score_name)
+    total_unique_ids = len(unique_ids)
+    idx = 0
+    with Pool(2) as p:
+        # do in chunks of 1000
+        while idx < total_unique_ids:
+            dfs = p.map(func, unique_ids[idx : idx + 500])
+            print(pd.concat(dfs).to_sql(
+                box_score_name, get_connection(), schema="nba", if_exists="append", chunksize=10000, index=False
+            ))
+            idx +=500 
+
+
+def _get_box_score_usage_df(game_id):
+    return BoxScoreUsageV2(game_id=game_id).sql_players_usage.get_data_frame()
+
+
+def update_box_score_usage_db():
+    _get_box_score_specific_data("box_score_usage", _get_box_score_usage_df)
+
+
+# def __update_box_score_usage_db():
+#     unique_ids = _get_unique_ids_to_update("box_score_usage")
+#     total_unique_ids = len(unique_ids)
+#     idx = 0
+#     with Pool(4) as p:
+#         while idx < total_unique_ids:
+#             dfs = p.map(_get_box_score_usage_df, unique_ids[idx:idx+1000])
+#             pd.concat(dfs).to_sql("box_score_usage", get_connection(), schema="nba", if_exists="append",
+#                                 chunksize=10000, index=False)
+#             idx += 1000
+
+
+def _get_four_factors_df(game_id):
+    return BoxScoreFourFactorsV2(game_id=game_id).sql_players_four_factors.get_data_frame()
+
+
+def _get_team_four_factors_df(game_id):
+    return BoxScoreFourFactorsV2(game_id=game_id).sql_teams_four_factors.get_data_frame()
+
+
+def update_box_score_4factors_db():
+    _get_box_score_specific_data("box_score_four_factors", _get_four_factors_df)
+    _get_box_score_specific_data("team_box_score_four_factors", _get_team_four_factors_df)
+
+
+def _get_box_score_advanced_df(game_id):
+    return BoxScoreAdvancedV2(game_id=game_id).player_stats.get_data_frame()
+
+
+def _get_team_advanced_df(game_id):
+    return BoxScoreAdvancedV2(game_id=game_id).team_stats.get_data_frame()
+
+
+def update_box_score_advanced_db():
+    _get_box_score_specific_data("box_score_advanced", _get_box_score_advanced_df)
+    _get_box_score_specific_data("team_box_score_advanced", _get_team_advanced_df)
+
+
+# def __update_box_score_advanced_db():
+#     unique_ids = _get_unique_ids_to_update("box_score_advanced")
+#     idx = 0
+#     total_unique_ids = len(unique_ids)
+#     with Pool(4) as p:
+#         while idx < total_unique_ids:
+#             dfs = p.map(_get_box_score_advanced_df, unique_ids[idx:idx+1000])
+#             pd.concat(dfs).to_sql("box_score_advanced", get_connection(), schema="nba", if_exists="append",
+#                                 chunksize=10000, index=False)
+#             dfs = p.map(_get_team_advanced_df, unique_ids[idx:idx+1000])
+#             pd.concat(dfs).to_sql("team_box_score_advanced", get_connection(), schema="nba", if_exists="append",
+#                                 chunksize=10000, index=False)
+#             idx += 1000
+
+
+def _get_box_score_defensive_df(game_id):
+    return BoxScoreDefensive(game_id=game_id).player_defensive_stats.get_data_frame()
+
+
+def update_box_score_defensive_db():
+    _get_box_score_specific_data("box_score_defensive", _get_box_score_advanced_df)
+
+
+def _get_box_score_scoring_df(game_id):
+    return BoxScoreScoringV2(game_id=game_id).sql_players_scoring.get_data_frame()
+
+
+def update_box_score_scoring_db():
+    _get_box_score_specific_data("box_score_scoring", _get_box_score_scoring_df)
