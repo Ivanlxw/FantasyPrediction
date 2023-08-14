@@ -1,9 +1,10 @@
 .envrc
 setup.py
-
+*__init__*
 test*.ipynb
 
 # any cache/init
 */__*
 # any setup.py generated egg info
 *.egg-info/
+__pycache__/
