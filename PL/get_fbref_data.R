@@ -2,7 +2,7 @@ library(worldfootballR)
 library(polars)
 
 idx = 0
-szn_end_year = 2021
+szn_end_year = 2024
 league_url <- fb_league_urls(country = "ENG", gender = "M", 
                              season_end_year = szn_end_year, tier = '1st')
 team_stats_list = fb_teams_urls(league_url)
@@ -15,7 +15,7 @@ player_log_fp = paste(
   sep=""
 )
 
-for (szn_team_url in team_stats_list[11:length(team_stats_list)]) {
+for (szn_team_url in team_stats_list) {
     player_stat_df_list = c()
     player_urls = fb_player_urls(szn_team_url)
     for (player_url in player_urls) {

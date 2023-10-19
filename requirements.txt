@@ -1,5 +1,6 @@
 requests
-psycopg2
 numpy
 nba_api
 soccerdata
+psycopg2
+sqlalchemy

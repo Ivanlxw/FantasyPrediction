@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import requests
 import pandas as pd
 
@@ -7,7 +8,7 @@ class PLAPIGetter:
     _instances = {}
 
     def __new__(cls, *args, **kwargs):
-        if not hasattr(cls, 'instance'):
+        if not hasattr(cls, "instance"):
             cls.instance = super(PLAPIGetter, cls).__new__(cls, *args, **kwargs)
         return cls.instance
 
@@ -25,7 +26,7 @@ class PLAPIGetter:
     def get_teams(self):
         return self.get_static_data()["teams"]
 
-    def get_fixtures(self):
+    def get_team_fixtures(self):
         res = requests.get(self.API_BASE_URL + "fixtures")
         if res.ok:
             return res.json()
@@ -53,21 +54,24 @@ class PLAPIGetter:
         return past_szn_stats
 
     def get_player_fixtures(self, player_id):
-        # TODO: multi threading
         past_szn_stats = self._get_player_info_all(player_id)["fixtures"]
         for d in past_szn_stats:
             d["player_id"] = player_id
         return past_szn_stats
-    
+
     def get_player_next_fixtures(self):
-        player_fixtures = []
-        for player_info in self.get_latest_player_info():
+        def get_player_fixtures(player_info):
             player_id = player_info["id"]
-            player_dict = self.get_player_fixtures(player_id)[0]
-            player_fixtures.append(player_dict)
+            return self.get_player_fixtures(player_id)[0]
+
+        with ThreadPoolExecutor(max_workers=8) as exec:
+            player_fixtures = [
+                exec.submit(get_player_fixtures, player_info) for player_info in self.get_latest_player_info()
+            ]
+            player_fixtures = [r.result() for r in player_fixtures]
         return pd.DataFrame(player_fixtures)
 
 
 if __name__ == "__main__":
     pl_getter = PLAPIGetter()
-    print(pl_getter.get_fixtures())
+    print(pl_getter.get_team_fixtures())
